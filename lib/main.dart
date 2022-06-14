@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_qr_app/clipboard.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_mobile_vision/qr_camera.dart';
+import 'package:qr_mobile_vision/qr_mobile_vision.dart';
 
 import 'logger.dart';
+import 'navigator.dart';
 import 'strings.dart';
 import 'url_launcher.dart';
 
@@ -14,7 +16,9 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({
+    Key? key,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -23,40 +27,21 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.blue,
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(72.0, 56.0),
+          ),
+        ),
       ),
-      home: const MyHomePage(),
+      home: const CameraPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({
+class CameraPage extends StatelessWidget {
+  const CameraPage({
     Key? key,
   }) : super(key: key);
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  late final MobileScannerController controller;
-
-  @override
-  void initState() {
-    super.initState();
-    controller = MobileScannerController(
-      facing: CameraFacing.back,
-      ratio: null,
-      torchEnabled: false,
-      formats: [BarcodeFormat.qrCode],
-    );
-  }
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -64,104 +49,107 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: const Text(kAppBarTitle),
       ),
-      body: _Scanner(controller),
+      body: const _Scanner(),
+      bottomNavigationBar: BottomNavigationBar(
+        onTap: (int index) {
+          logger.d("BottomNavigationBar: ${index}");
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.camera_alt),
+            label: "Scan",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history),
+            label: "History",
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _Scanner extends StatefulWidget {
-  const _Scanner(this.controller, {
+  const _Scanner({
     Key? key,
   }) : super(key: key);
-
-  final MobileScannerController controller;
 
   @override
   _ScannerState createState() => _ScannerState();
 }
 
 class _ScannerState extends State<_Scanner> {
-  Future<void>? _scanning;
+  Future<void>? _handling;
 
   @override
   Widget build(BuildContext context) {
-    return MobileScanner(
-      onDetect: (barcode, args) {
-        if (_scanning == null) {
-          _scanning = _onDetect(context, barcode, args);
-          _scanning?.whenComplete(() => _scanning = null);
-        }
+    if (_handling != null) {
+      logger.d("handlingBuilder");
+      return const Center(child: Text("Camera Paused"));
+    }
+
+    return QrCamera(
+      // key: cameraKey,
+      // formats: const [BarcodeFormats.QR_CODE],
+      qrCodeCallback: qrCodeCallback,
+      notStartedBuilder: (context) {
+        logger.d("notStartedBuilder");
+        return const Center(
+          child: CircularProgressIndicator(),
+        );
       },
-      controller: widget.controller,
-      fit: BoxFit.cover,
-      allowDuplicates: true,
+      offscreenBuilder: (context) {
+        logger.d("offscreenBuilder");
+        return const Center(child: Text("Camera Paused"));
+      },
+      onError: (context, error) {
+        logger.d("onError: ${error}");
+        return const Center(child: Text("Camera Error"));
+      },
     );
   }
 
-  Future<void> _onDetect(
-    BuildContext context,
-    Barcode barcode,
-    MobileScannerArguments? args,
-  ) async {
-    final value = barcode.rawValue;
+  Future<void> qrCodeCallback(String? value) async {
+    if (!mounted) {
+      logger.d("not mounted");
+      return;
+    }
+    if (_handling != null) {
+      logger.d("now handling");
+      return;
+    }
     if (value == null) {
-      logger.d("Failed to scan code");
+      logger.d("no value");
       return;
     }
+    logger.d("detected: ${value}");
 
-    logger.d("Barcode found: ${value}");
-
-    widget.controller.stop();
-    try {
-      final kind = await showDialog<_DialogOptionKind>(
-        context: context,
-        builder: (context) {
-          return _Dialog(value);
-        },
-      );
-      _handleMenu(context, value, kind);
-    } finally {
-      if (widget.controller.isStarting == false) {
-        widget.controller.start();
-      }
-    }
+    final future = handleCode(value);
+    _setHandling(future);
+    return future.whenComplete(_clearHandling);
   }
 
-  Future<void> _handleMenu(
-    BuildContext context,
-    String value,
-    _DialogOptionKind? kind,
-  ) async {
-    if (kind == null) {
-      return;
-    }
+  void _setHandling(Future<void>? future) {
+    setState(() {
+      _handling = future;
+    });
+  }
 
-    switch (kind) {
-      case _DialogOptionKind.open:
-        final result = await launchUrl(value);
-        if (!result) {
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
-            content: Text("Failed to launch"),
-          ));
-        }
-        break;
-      case _DialogOptionKind.copy:
-        await clipboardPaste(value);
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
-          content: Text("Copied"),
-        ));
-        break;
-    }
+  void _clearHandling() {
+    _setHandling(null);
+  }
+
+  Future<void> handleCode(String value) async {
+    await pushDialog(context, (context) {
+      return _ValuePage(value);
+    });
+
+    await Future.delayed(const Duration(seconds: 3));
   }
 }
 
-enum _DialogOptionKind {
-  open,
-  copy,
-}
-
-class _Dialog extends StatelessWidget {
-  _Dialog(
+class _ValuePage extends StatelessWidget {
+  _ValuePage(
     String value, {
     Key? key,
   })  : value = breakWord(value),
@@ -172,32 +160,43 @@ class _Dialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SimpleDialog(
-      contentPadding: const EdgeInsets.all(24.0),
-      children: [
-        Text(
-          value,
-          style: theme.textTheme.headlineSmall,
-        ),
-        const Divider(),
-        _DialogOption(
-          onPressed: () {
-            _pop(context, _DialogOptionKind.open);
-          },
-          title: "Open in browser",
-        ),
-        _DialogOption(
-          onPressed: () {
-            _pop(context, _DialogOptionKind.copy);
-          },
-          title: "Copy",
-        ),
-      ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Detected"),
+      ),
+      body: ListView(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              value,
+              style: theme.textTheme.headlineSmall,
+            ),
+          ),
+          const Divider(),
+          _DialogOption(
+            onPressed: () async {
+              final result = await launchUrl(value);
+              if (!result) {
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+                  content: Text("Failed to launch"),
+                ));
+              }
+            },
+            title: "Open in browser",
+          ),
+          _DialogOption(
+            onPressed: () async {
+              await clipboardPaste(value);
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+                content: Text("Copied"),
+              ));
+            },
+            title: "Copy",
+          ),
+        ],
+      ),
     );
-  }
-
-  void _pop(BuildContext context, _DialogOptionKind kind) {
-    Navigator.maybeOf(context)?.pop(kind);
   }
 }
 
@@ -214,9 +213,12 @@ class _DialogOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton(
-      onPressed: onPressed,
-      child: Text(title),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+      child: ElevatedButton(
+        onPressed: onPressed,
+        child: Text(title),
+      ),
     );
   }
 }
