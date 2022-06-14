@@ -1,4 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_qr_app/clipboard.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+
+import 'logger.dart';
+import 'strings.dart';
+import 'url_launcher.dart';
+
+const kAppTitle = "QR Reader";
+const kAppBarTitle = "QR Reader";
 
 void main() {
   runApp(const MyApp());
@@ -7,109 +16,207 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: kAppTitle,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
+        useMaterial3: true,
+        colorSchemeSeed: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MyHomePage(),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({Key? key, required this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  const MyHomePage({
+    Key? key,
+  }) : super(key: key);
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+  late final MobileScannerController controller;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    controller = MobileScannerController(
+      facing: CameraFacing.back,
+      ratio: null,
+      torchEnabled: false,
+      formats: [BarcodeFormat.qrCode],
+    );
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text(kAppBarTitle),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
+      body: _Scanner(controller),
+    );
+  }
+}
+
+class _Scanner extends StatefulWidget {
+  const _Scanner(this.controller, {
+    Key? key,
+  }) : super(key: key);
+
+  final MobileScannerController controller;
+
+  @override
+  _ScannerState createState() => _ScannerState();
+}
+
+class _ScannerState extends State<_Scanner> {
+  Future<void>? _scanning;
+
+  @override
+  Widget build(BuildContext context) {
+    return MobileScanner(
+      onDetect: (barcode, args) {
+        if (_scanning == null) {
+          _scanning = _onDetect(context, barcode, args);
+          _scanning?.whenComplete(() => _scanning = null);
+        }
+      },
+      controller: widget.controller,
+      fit: BoxFit.cover,
+      allowDuplicates: true,
+    );
+  }
+
+  Future<void> _onDetect(
+    BuildContext context,
+    Barcode barcode,
+    MobileScannerArguments? args,
+  ) async {
+    final value = barcode.rawValue;
+    if (value == null) {
+      logger.d("Failed to scan code");
+      return;
+    }
+
+    logger.d("Barcode found: ${value}");
+
+    widget.controller.stop();
+    try {
+      final kind = await showDialog<_DialogOptionKind>(
+        context: context,
+        builder: (context) {
+          return _Dialog(value);
+        },
+      );
+      _handleMenu(context, value, kind);
+    } finally {
+      if (widget.controller.isStarting == false) {
+        widget.controller.start();
+      }
+    }
+  }
+
+  Future<void> _handleMenu(
+    BuildContext context,
+    String value,
+    _DialogOptionKind? kind,
+  ) async {
+    if (kind == null) {
+      return;
+    }
+
+    switch (kind) {
+      case _DialogOptionKind.open:
+        final result = await launchUrl(value);
+        if (!result) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+            content: Text("Failed to launch"),
+          ));
+        }
+        break;
+      case _DialogOptionKind.copy:
+        await clipboardPaste(value);
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text("Copied"),
+        ));
+        break;
+    }
+  }
+}
+
+enum _DialogOptionKind {
+  open,
+  copy,
+}
+
+class _Dialog extends StatelessWidget {
+  _Dialog(
+    String value, {
+    Key? key,
+  })  : value = breakWord(value),
+        super(key: key);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SimpleDialog(
+      contentPadding: const EdgeInsets.all(24.0),
+      children: [
+        Text(
+          value,
+          style: theme.textTheme.headlineSmall,
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        const Divider(),
+        _DialogOption(
+          onPressed: () {
+            _pop(context, _DialogOptionKind.open);
+          },
+          title: "Open in browser",
+        ),
+        _DialogOption(
+          onPressed: () {
+            _pop(context, _DialogOptionKind.copy);
+          },
+          title: "Copy",
+        ),
+      ],
+    );
+  }
+
+  void _pop(BuildContext context, _DialogOptionKind kind) {
+    Navigator.maybeOf(context)?.pop(kind);
+  }
+}
+
+class _DialogOption extends StatelessWidget {
+  const _DialogOption({
+    required this.onPressed,
+    required this.title,
+    Key? key,
+  }) : super(key: key);
+
+  final VoidCallback? onPressed;
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      child: Text(title),
     );
   }
 }
