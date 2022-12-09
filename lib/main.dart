@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_qr_app/clipboard.dart';
-import 'package:qr_mobile_vision/qr_camera.dart';
-import 'package:qr_mobile_vision/qr_mobile_vision.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'logger.dart';
 import 'navigator.dart';
@@ -79,83 +78,102 @@ class _Scanner extends StatefulWidget {
 }
 
 class _ScannerState extends State<_Scanner> {
-  Future<void>? _handling;
+  String? _lastValue;
+  MobileScannerController? _controller;
+  bool _stop = false;
 
   @override
-  Widget build(BuildContext context) {
-    if (_handling != null) {
-      logger.d("handlingBuilder");
-      return const Center(child: Text("Camera Paused"));
-    }
-
-    return QrCamera(
-      // key: cameraKey,
-      // formats: const [BarcodeFormats.QR_CODE],
-      qrCodeCallback: qrCodeCallback,
-      notStartedBuilder: (context) {
-        logger.d("notStartedBuilder");
-        return const Center(
-          child: CircularProgressIndicator(),
-        );
-      },
-      offscreenBuilder: (context) {
-        logger.d("offscreenBuilder");
-        return const Center(child: Text("Camera Paused"));
-      },
-      onError: (context, error) {
-        logger.d("onError: ${error}");
-        return const Center(child: Text("Camera Error"));
-      },
+  void initState() {
+    super.initState();
+    _controller?.dispose();
+    _controller = MobileScannerController(
+      facing: CameraFacing.back,
+      torchEnabled: false,
+      formats: [BarcodeFormat.qrCode],
     );
   }
 
-  Future<void> qrCodeCallback(String? value) async {
+  @override
+  void dispose() {
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loading = _stop || (_controller?.isStarting == true);
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Stack(
+        children: [
+          MobileScanner(
+            onDetect: (barcode, args) {
+              _onNewCode(context, barcode.rawValue);
+            },
+            controller: _controller,
+            fit: BoxFit.cover,
+            allowDuplicates: false,
+          ),
+          if (loading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _onNewCode(BuildContext context, String? value) {
     if (!mounted) {
       logger.d("not mounted");
       return;
     }
-    if (_handling != null) {
-      logger.d("now handling");
+
+    if (value == _lastValue) {
+      logger.d("duplicate: ${value}");
       return;
     }
-    if (value == null) {
+    _lastValue = value;
+
+    if (value == null || value.isEmpty) {
       logger.d("no value");
       return;
     }
     logger.d("detected: ${value}");
-
-    final future = handleCode(value);
-    _setHandling(future);
-    return future.whenComplete(_clearHandling);
+    _handleCode(value);
   }
 
-  void _setHandling(Future<void>? future) {
+  Future<void> _handleCode(String value) async {
     setState(() {
-      _handling = future;
+      _stop = true;
     });
-  }
+    _controller?.stop();
 
-  void _clearHandling() {
-    _setHandling(null);
-  }
-
-  Future<void> handleCode(String value) async {
-    await pushDialog(context, (context) {
-      return _ValuePage(value);
-    });
-
-    await Future.delayed(const Duration(seconds: 3));
+    try {
+      await pushDialog(context, (context) {
+        return _ValuePage(value);
+      });
+      await Future.delayed(const Duration(seconds: 1));
+    } finally {
+      await _controller?.start();
+      setState(() {
+        _stop = false;
+      });
+    }
   }
 }
 
 class _ValuePage extends StatelessWidget {
   _ValuePage(
-    String value, {
+    this.value, {
     Key? key,
-  })  : value = breakWord(value),
+  })  : textValue = breakWord(value),
         super(key: key);
 
   final String value;
+
+  final String textValue;
 
   @override
   Widget build(BuildContext context) {
@@ -169,17 +187,18 @@ class _ValuePage extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(24.0),
             child: Text(
-              value,
+              textValue,
               style: theme.textTheme.headlineSmall,
             ),
           ),
           const Divider(),
           _DialogOption(
             onPressed: () async {
-              final result = await launchUrl(value);
-              if (!result) {
-                ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
-                  content: Text("Failed to launch"),
+              try {
+                await launchUrl(value);
+              } catch (ex) {
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+                  content: Text("Error: ${ex}"),
                 ));
               }
             },

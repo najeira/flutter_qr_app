@@ -61,13 +61,13 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.najeira.qr"
+        applicationId "com.najeira.flutter_qr_app"
         minSdkVersion 21 // 5.x
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         if (dartEnvironmentVariables.FLAVOR != 'prod') {
-            applicationIdSuffix ".${dartEnvironmentVariables.FLAVOR}"
+            //applicationIdSuffix ".${dartEnvironmentVariables.FLAVOR}"
             resValue "string", "app_name", "QR(d)"
         } else {
             resValue "string", "app_name", "QR"
