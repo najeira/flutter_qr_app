@@ -1,7 +1,7 @@
 name: flutter_qr_app
 description: A QR code reader powered by Flutter.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.2+100020
 
 environment:
   sdk: '>=2.18.4 <3.0.0'
