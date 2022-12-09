@@ -129,6 +129,14 @@ class _ScannerState extends State<_Scanner> {
       logger.d("not mounted");
       return;
     }
+    if (_stop) {
+      logger.d("stop");
+      return;
+    }
+    if (value == null || value.isEmpty) {
+      logger.d("no value");
+      return;
+    }
 
     if (value == _lastValue) {
       logger.d("duplicate: ${value}");
@@ -136,10 +144,6 @@ class _ScannerState extends State<_Scanner> {
     }
     _lastValue = value;
 
-    if (value == null || value.isEmpty) {
-      logger.d("no value");
-      return;
-    }
     logger.d("detected: ${value}");
     _handleCode(value);
   }
@@ -148,7 +152,7 @@ class _ScannerState extends State<_Scanner> {
     setState(() {
       _stop = true;
     });
-    _controller?.stop();
+    await _controller?.stop();
 
     try {
       await pushDialog(context, (context) {
