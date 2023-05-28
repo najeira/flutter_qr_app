@@ -88,8 +88,11 @@ class _ScannerState extends State<_Scanner> {
     _controller?.dispose();
     _controller = MobileScannerController(
       facing: CameraFacing.back,
+      detectionSpeed: DetectionSpeed.noDuplicates,
       torchEnabled: false,
       formats: [BarcodeFormat.qrCode],
+      returnImage: false,
+      autoStart: true,
     );
   }
 
@@ -108,12 +111,14 @@ class _ScannerState extends State<_Scanner> {
       child: Stack(
         children: [
           MobileScanner(
-            onDetect: (barcode, args) {
-              _onNewCode(context, barcode.rawValue);
+            onDetect: (barcodes) {
+              _onNewCode(context, barcodes.barcodes.firstOrNull?.rawValue);
+            },
+            onScannerStarted: (arguments) {
+              setState(() {});
             },
             controller: _controller,
             fit: BoxFit.cover,
-            allowDuplicates: false,
           ),
           if (loading)
             const Center(
@@ -149,13 +154,15 @@ class _ScannerState extends State<_Scanner> {
   }
 
   Future<void> _handleCode(String value) async {
+    final nav = Navigator.of(context, rootNavigator: true);
+
     setState(() {
       _stop = true;
     });
     await _controller?.stop();
 
     try {
-      await pushDialog(context, (context) {
+      await pushDialogToNavigator(nav, (context) {
         return _ValuePage(value);
       });
       await Future.delayed(const Duration(seconds: 1));
@@ -210,8 +217,9 @@ class _ValuePage extends StatelessWidget {
           ),
           _DialogOption(
             onPressed: () async {
+              final sm = ScaffoldMessenger.maybeOf(context);
               await clipboardPaste(value);
-              ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+              sm?.showSnackBar(const SnackBar(
                 content: Text("Copied"),
               ));
             },
